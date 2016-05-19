@@ -21,6 +21,7 @@ globals
   simulation-speed
   ticks-per-cycle
   congestion-level
+  totalsubsidy
   ]
 ;; Driver functions
 breed [drivers a-driver]
@@ -30,19 +31,13 @@ drivers-own
   wait-time  ;; the amount of time since the last time a turtle has moved
   passenger_amount ;;possible use when assigning passengers to single drivers
   d-valuation
-  target
   is-solo?]
-
-
 
 ;; Passenger functions
 breed [passengers a-passenger]
 passengers-own
 [
   speed  ;; the speed of the turtle
-  ;up-car?  ;; this will be true if the turtle moves downwards and false if it moves to the right
-  ;wait-time
-  ;is-passenger?
   p-valuation
   time-on-patch
   max-time-on-patch
@@ -50,7 +45,7 @@ passengers-own
 
 patches-own
 [  intersection?  ;; this is true if the patch is at the intersection of two roads
-  is-target? ;;target for house placement
+  is-target? ;;target for turtle placement = origin
   is-endpoint? ;;end point of the road where the trip ends
   ]
 
@@ -68,9 +63,6 @@ end
 ;; Initialize the display by giving the global and patch variables initial values.
 ;; Create num-cars of turtles if there are enough road patches for one turtle to be created per road patch.
 ;; Setup the plots
-;; All code in setup is done if full-setup? is true.  If it is false, then it doesn't clear the information
-;; about the users; users still retain the same light that they had before.
-;; "setup false" is done by the re-run button.
 to setup
   clear-output
   clear-turtles
@@ -82,16 +74,12 @@ to setup
   setup-globals
     clear-patches
     setup-patches
-    setup-intersections
     name-target
     name-endpoint
 
     set-default-shape drivers "car"
 set-default-shape passengers "person"
-
-  ;if (number > count roads) [ user-message (word  "There are too many cars for the amount of road.  ")  stop ]
-
-  ;; Now create the turtles and have each created turtle call the functions setup-cars and set-car-color
+  ;; create the turtles
   create-passengers number [setup-passengers]
   ask drivers ;; give the drivers an initial speed
   [    set-car-speed        ]
@@ -116,10 +104,10 @@ to setup-globals
   set total-rides 0
   set person-miles-per-vehicle-mile 0
   set congestion-level 0
+  set totalsubsidy government-action-amount
 end
 
-;; Make the patches have appropriate colors, setup the roads and intersections agentsets,
-;; and initialize the traffic lights to one setting
+;; Make the patches have appropriate colors, setup the roads and intersections agentsets
 to setup-patches
   ;; initialize the patch-own variables and color the patches to a base-color
   ask patches
@@ -131,15 +119,7 @@ to setup-patches
                            (floor ((pycor + max-pycor) mod grid-y-inc) = 0) ]
   set intersections roads with [ (floor ((pxcor + max-pxcor - floor(grid-x-inc - 1)) mod grid-x-inc) = 0) and
                                  (floor ((pycor + max-pycor) mod grid-y-inc) = 0) ]
-
   ask roads  [ set pcolor white ]
-end
-
-;; Give the intersections appropriate values for the intersection?, my-row, and my-column
-;; patch variables.  Make all the traffic lights start off so that the lights are red
-;; horizontally and green vertically.
-to setup-intersections
-  ask intersections  [  ]
 end
 
 ;; Initialize the turtle variables to appropriate values and place the turtle on an empty road patch.
@@ -167,7 +147,7 @@ to setup-cars  ;; turtle procedure
   [ set heading 90 ]
 end
 
-;; Places drivers on green road patches
+;; Places drivers on green road patches (=origins)
 to put-on-empty-road  ;; turtle procedure
   move-to one-of roads with [pcolor = green]
 end
@@ -175,7 +155,6 @@ to setup-passengers
   move-to one-of patches with [pcolor = green]
   mobility-valuation
   set time-on-patch 0
-
   ;set the maximum accepted wait time by each passenger (until he leaves) to a random value of up to the global maximum wait time
   set max-time-on-patch random (max-global-wait-time + 1)
 end
@@ -185,16 +164,10 @@ end
 ;;;;;;;;;;;;;;;;;;;;;;;
 ;; Runtime Functions ;;
 ;;;;;;;;;;;;;;;;;;;;;;;
-
-;; receives information from the clients and runs the simulation
 to go
-  ;; get commands and data from the clients
- ; listen-clients
-
   every delay
   [
     set num-cars-stopped 0
-
     ;; set the turtles speed for this time thru the procedure, move them forward their speed,
     ;; record data for plotting, and set the color of the turtles
     ;; to an appropriate color based on their speed
@@ -203,7 +176,6 @@ to go
       fd speed
       record-data
       set-car-color ]
-
     ;; update the clock and the phase
     clock-tick
   ]
@@ -212,19 +184,15 @@ to go
   jump-to-start
   if hide-links = True [ask links [hide-link]]
   update-congestion
-  if ticks >= 30000 [stop]
+  if ticks >= 30000 [stop] ;this limits the simulation to 30000 steps
 end
 
-
-
-
-;; reports the amount of seconds by which to slow the model down
+;; legacy code, ignore
 to-report delay
   ifelse simulation-speed <= 0
   [ report ln (10 / 0.001) ]
   [ report ln (10 / simulation-speed) ]
 end
-
 
 to set-car-speed
   ask one-of drivers [
@@ -235,7 +203,6 @@ to set-car-speed
     [ set-speed 1 0
       ;set-solo-speed 1 0
       ]]
-
 end
 
 ;; set the speed variable of the turtle to an appropriate value (not exceeding the
@@ -272,7 +239,7 @@ to speed-up  ;; turtle procedure
   [ set speed speed + acceleration ]
 end
 
-;; set the color of the turtle to a different color based on how fast the turtle is moving
+;; set the color of the turtle to a different color based on how fast the turtle is moving, for visual debugging
 to set-car-color  ;; turtle procedure
   if breed = drivers [
   ifelse speed < (speed-limit / 2)
@@ -286,10 +253,8 @@ end
 ;; if its speed is 0
 to record-data  ;; turtle procedure
   ifelse speed = 0
-  [
-    set num-cars-stopped num-cars-stopped + 1
-    set wait-time wait-time + 1
-  ]
+  [    set num-cars-stopped num-cars-stopped + 1
+    set wait-time wait-time + 1  ]
   [ set wait-time 0 ]
 end
 
@@ -303,41 +268,26 @@ to clock-tick
 end
 
 to hide-or-show-pen [name-of-plot]
-  ;ifelse plots-to-display = "All three plots" or plots-to-display = name-of-plot
-  ;[
     __plot-pen-show
-    ;]
- ; [ __plot-pen-hide ]
 end
 
-
-
-
-
-;;;;;;;;;;;;;;;;;;;;;;;
-;; Custom Additions  ;;
-;;;;;;;;;;;;;;;;;;;;;;;
-
-;Mobility valuation
+;valuation of passengers
 to mobility-valuation
   set p-valuation (1 + random-float 9)
 end
 ;;;depending on external effects (government action), the valuation of drivers changes accordingly
 to driver-valuation
-  if government-action = "subsidy" [set d-valuation ((1 + random-float 9) * (1 - government-action-amount - congestion-level))]
+  if government-action = "subsidy" [set d-valuation ((1 + random-float 9) * (1 - totalsubsidy))]
   if government-action = "tax" [set d-valuation ((1 + random-float 9) * (1 + government-action-amount - congestion-level))]
   if government-action = "nothing" [set d-valuation ((1 + random-float 9)* (1 - congestion-level))]
 end
 
-
-;;sets every patch at y=18 or x=-18 which is located on a road to a "target"
+;;sets every patch at y=18 or x=-18 which is located on a road to a target for turtle placement(=origin)
 to name-target
   ask patches [
     if (pycor = 18) or (pxcor = -18) and (pcolor = white)
   [set is-target? true
-    set pcolor green
-  ]
-  ]
+    set pcolor green  ]  ]
 end
 ;;;sets every patch at y=18 or x=-18 which is located on a road to an "endpoint"
 to name-endpoint
@@ -349,22 +299,19 @@ to name-endpoint
   ask patch 18 -18 [set is-endpoint? true
     set pcolor blue  ]
 end
-
+;;; Depending on d-valuation, make drivers be solo drivers or "regular" drivers who take passengers
 to assign-drivers
-  ;;; Depending on d-valuation, make drivers be solo drivers or "regular" drivers who take passengers
-  ifelse (d-valuation < 2)
+  ifelse (d-valuation > 10)
   [set is-solo? True]
   [set is-solo? False]
-
 end
 
-
-to update-personmiles
+to update-personmiles ;for collecting data
   let pmpvm (passenger_amount + 1)
   set person-miles-per-vehicle-mile (person-miles-per-vehicle-mile + pmpvm)
   set total-rides (total-rides + 1)
 end
-;;drivers reaching end point jump back to random start
+;;drivers reaching end point jump back to random origin point
 to jump-to-start
       ask drivers [ifelse (up-car? = True)
       [if (pcolor = blue) and  (pxcor != 18)[update-personmiles change-to-passenger ask my-links [ask other-end [setup-passengers]]
@@ -377,7 +324,7 @@ to jump-to-start
     ;setup-cars
 end
 to change-to-passenger
-  set breed passengers setup-passengers ;set size 5
+  set breed passengers setup-passengers
 end
 to change-to-driver
     set breed drivers
@@ -385,7 +332,7 @@ to change-to-driver
     set-car-color
     record-data
     driver-valuation
-    assign-drivers ;;depending on d-valuation, make drivers be solo drivers or "regular" drivers who take passengers
+    assign-drivers
     set-car-speed
 
 end
@@ -418,13 +365,16 @@ end
 
 to update-congestion
   set congestion-level ((num-cars-stopped + 0.0001) / (count drivers + 0.0001))
+  ifelse (government-action-amount + congestion-level) > 0.9999 ;limits positive government effects to 0.9999
+  [set totalsubsidy 0.9999]
+  [set totalsubsidy (government-action-amount + congestion-level)]
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-282
-95
-664
-498
+287
+55
+669
+458
 18
 18
 10.0541
@@ -449,9 +399,9 @@ ticks
 
 PLOT
 565
-500
+458
 844
-689
+647
 Average Wait Time of Cars
 Time
 Average Wait
@@ -466,10 +416,10 @@ PENS
 "default" 1.0 0 -1893860 true "" "hide-or-show-pen  \"Average Wait Time of Cars\" \nif any? drivers [plot mean [wait-time] of drivers]"
 
 PLOT
-283
-500
-562
-689
+286
+458
+565
+647
 Average Speed of Cars
 Time
 Average Speed
@@ -529,10 +479,10 @@ People
 HORIZONTAL
 
 PLOT
-1
-500
-280
-689
+7
+457
+286
+646
 Stopped Cars
 Time
 Stopped Cars
@@ -592,17 +542,6 @@ count drivers + count passengers
 11
 
 MONITOR
-665
-451
-828
-496
-Current avg. speed of cars
-precision mean [speed] of drivers 2
-17
-1
-11
-
-MONITOR
 443
 10
 520
@@ -625,32 +564,10 @@ count drivers
 11
 
 MONITOR
-521
-10
-608
-55
- is-solo? drivers
-count drivers with [is-solo? = True]
-17
-1
-11
-
-MONITOR
-664
-407
-787
-452
-Current amount of links
-count links
-17
-1
-11
-
-MONITOR
-157
-385
-281
-430
+156
+329
+280
+374
 Total number of drivers
 unsuccessful-rides
 17
@@ -658,10 +575,10 @@ unsuccessful-rides
 11
 
 MONITOR
-0
-385
-156
-430
+1
+329
+157
+374
 Total number of passengers
 successful-rides
 17
@@ -676,7 +593,7 @@ SLIDER
 max-global-wait-time
 max-global-wait-time
 0
-5
+15
 5
 1
 1
@@ -720,45 +637,12 @@ NIL
 HORIZONTAL
 
 MONITOR
-663
-363
-753
-408
-Current PM/VM
-precision (mean [(passenger_amount + 1)] of drivers) 4
-17
-1
-11
-
-MONITOR
-4
-292
-128
-337
-Finished rides of drivers
-total-rides ;single rides of drivers \n;(who may have passengers onboard)\n;increases every time a driver \n;reaches a destination
-17
-1
-11
-
-MONITOR
 111
 232
 201
 277
 PM/VM total
 precision (person-miles-per-vehicle-mile / total-rides) 4
-17
-1
-11
-
-MONITOR
-662
-318
-794
-363
-Current congestion level
-precision congestion-level 4
 17
 1
 11
@@ -775,30 +659,51 @@ precision (successful-rides / (successful-rides + unsuccessful-rides)) 4
 11
 
 MONITOR
-123
-339
-280
-384
+124
+284
+281
+329
 Total rides
 successful-rides + unsuccessful-rides
 17
 1
 11
 
+TEXTBOX
+9
+191
+159
+229
+See Info tab for more information.
+15
+0.0
+1
+
 @#$#@#$#@
-## WHAT IS IT?
+## An Agent-Based Simulation of Ridesharing Markets
+This model allows to simulate a ridesharing market with several economic and traffic parameters. There are drivers and passengers who interact and can share rides.
 
-## HOW TO USE IT
-
-### Quickstart instructions
-
+## Overview
 ### Buttons
+
+SETUP - generates a new traffic grid based on the current GRID-SIZE-X and GRID-SIZE-Y
+GO - runs the simulation for 30000 steps
 
 ### Sliders
 
+NUMBER - the number of agents in the simulation, represents system density  (higher number means higher density, you must press the SETUP button to see the change)
+GRID-SIZE-X - sets the number of vertical roads there are (you must press the SETUP button to see the change)
+GRID-SIZE-Y - sets the number of horizontal roads there are (you must press the SETUP button to see the change)
+MAX-GLOBAL-WAIT-TIME - sets the upper limit for the individual random number that is the wait time of each passenger
+GOVERNMENT-ACTION-AMOUNT - set the amount of subsidy or tax that the government imposes on the drivers
+
 ### Choosers
 
+GOVERNMENT-ACTION - choose between subsidy, tax or no government involvement at all
+
 ### Switches
+
+HIDE-LINKS - Switch to Off to display the links between drivers and passengers in the output window
 
 ### Plots
 
@@ -806,20 +711,30 @@ STOPPED CARS - displays the number of stopped cars over time
 AVERAGE SPEED OF CARS - displays the average speed of cars over time
 AVERAGE WAIT TIME OF CARS - displays the average time cars are stopped over time
 
-### Client Information
+## Important parameters
+MATCHING RATE - amount of passengers who found a match relative to the amount of passengers who were looking for one
+PM/VM - person miles per vehicle mile
+TOTAL RIDES - (total number of passengers + total number of drivers) = total rides
 
-## THINGS TO NOTICE
+## Using the model
+Change MAX-GLOBAL-WAIT-TIME to adjust time schedule flexibility of passengers.
+Change GOVERNMENT-ACTION-AMOUNT in combination with the desired GOVERNMENT-ACTION to impose taxes or subsidies on drivers.
+Change NUMBER to adjust system density
 
-## THINGS TO TRY
+Results can be exported as a .csv file.
 
-## EXTENDING THE MODEL
+## Possible model extensions
+The model features only static routing. Future work could implement dynamic routing and shortest-path optimization. Also, flexibility is currently only implemented for passengers.
 
-## HOW TO CITE
 
-Please cite the NetLogo software as:
+## About
+Bachelor thesis of Sebastian Windmüller at the chair of Prof. Dr. Christoph M. Flath, University of Würzburg, Germany.
 
-* Wilensky, U. (1999). NetLogo. http://ccl.northwestern.edu/netlogo/. Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
+Find the program code and simulation results at
+https://github.com/herbipolis/Ridesharing-simulation
 
+Uses parts of:
+Wilensky, U. and Stroup, W. (1999).  NetLogo HubNet Gridlock HubNet model.  http://ccl.northwestern.edu/netlogo/models/HubNetGridlockHubNet.  Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
 @#$#@#$#@
 default
 true
